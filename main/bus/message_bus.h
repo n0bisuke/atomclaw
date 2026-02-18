@@ -9,10 +9,14 @@
 #define MIMI_CHAN_WEBSOCKET  "websocket"
 #define MIMI_CHAN_CLI        "cli"
 
+/* Channel identifiers - AtomClaw */
+#define MIMI_CHAN_DISCORD    "discord"
+
 /* Message types on the bus */
 typedef struct {
-    char channel[16];       /* "telegram", "websocket", "cli" */
-    char chat_id[32];       /* Telegram chat_id or WS client id */
+    char channel[16];       /* "telegram", "websocket", "cli", "discord" */
+    char chat_id[32];       /* Telegram chat_id, WS client id, or Discord user_id */
+    char meta[128];         /* Channel-specific metadata (e.g. Discord interaction_token) */
     char *content;          /* Heap-allocated message text (caller must free) */
 } mimi_msg_t;
 

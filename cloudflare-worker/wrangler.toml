@@ -1,0 +1,16 @@
+name       = "atomclaw-history"
+main       = "worker.js"
+compatibility_date = "2024-01-01"
+
+# KV namespace - create with: wrangler kv namespace create ATOMCLAW_HISTORY
+[[kv_namespaces]]
+binding = "ATOMCLAW_HISTORY"
+id      = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# Environment variables (set via wrangler secret or dashboard)
+# wrangler secret put AUTH_TOKEN
+# wrangler secret put OPENAI_KEY
+
+# Optional: customize summarize interval
+[vars]
+SUMMARIZE_EVERY = "20"

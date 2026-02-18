@@ -1,0 +1,17 @@
+menu "Build Variant"
+
+    choice DEVICE_VARIANT
+        prompt "Device variant"
+        default DEVICE_MIMICLAW
+        help
+            Select which firmware variant to build.
+
+        config DEVICE_MIMICLAW
+            bool "MimiClaw (16MB Flash, Telegram + WebSocket)"
+
+        config DEVICE_ATOMCLAW
+            bool "AtomClaw (8MB Flash, Discord + Cloudflare)"
+
+    endchoice
+
+endmenu

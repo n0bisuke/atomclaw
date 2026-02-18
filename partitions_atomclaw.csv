@@ -1,0 +1,6 @@
+# AtomClaw partition table - ESP32-S3 8MB Flash, No OTA
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xF000,   0x1000
+factory,  app,  factory, 0x20000,  0x500000
+spiffs,   data, spiffs,  0x520000, 0x2A0000

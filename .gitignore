@@ -29,6 +29,16 @@ mimi_secrets.h
 # Environment
 .env
 main/mimi_secrets.h
+main/atom_secrets.h
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Cloudflare Worker
+cloudflare-worker/.wrangler/
+cloudflare-worker/node_modules/
 
 # Cache / Compiled
 .cache
