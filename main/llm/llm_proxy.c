@@ -33,12 +33,19 @@ typedef struct {
     char *data;
     size_t len;
     size_t cap;
+    uint32_t caps;
 } resp_buf_t;
 
 static esp_err_t resp_buf_init(resp_buf_t *rb, size_t initial_cap)
 {
-    rb->data = heap_caps_calloc(1, initial_cap, MALLOC_CAP_SPIRAM);
-    if (!rb->data) return ESP_ERR_NO_MEM;
+    rb->caps = MALLOC_CAP_SPIRAM;
+    rb->data = heap_caps_calloc(1, initial_cap, rb->caps);
+    if (!rb->data) {
+        rb->caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        rb->data = heap_caps_calloc(1, initial_cap, rb->caps);
+        if (!rb->data) return ESP_ERR_NO_MEM;
+        ESP_LOGW(TAG, "LLM response buffer allocated in internal RAM (PSRAM unavailable)");
+    }
     rb->len = 0;
     rb->cap = initial_cap;
     return ESP_OK;
@@ -48,7 +55,7 @@ static esp_err_t resp_buf_append(resp_buf_t *rb, const char *data, size_t len)
 {
     while (rb->len + len >= rb->cap) {
         size_t new_cap = rb->cap * 2;
-        char *tmp = heap_caps_realloc(rb->data, new_cap, MALLOC_CAP_SPIRAM);
+        char *tmp = heap_caps_realloc(rb->data, new_cap, rb->caps);
         if (!tmp) return ESP_ERR_NO_MEM;
         rb->data = tmp;
         rb->cap = new_cap;
@@ -65,6 +72,7 @@ static void resp_buf_free(resp_buf_t *rb)
     rb->data = NULL;
     rb->len = 0;
     rb->cap = 0;
+    rb->caps = 0;
 }
 
 /* ── HTTP event handler (for esp_http_client direct path) ─────── */

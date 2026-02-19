@@ -27,6 +27,7 @@
 #include "proxy/http_proxy.h"
 #include "tools/tool_registry.h"
 #include "rgb/rgb.h"
+#include "display/display.h"
 
 static const char *TAG = "atomclaw";
 
@@ -371,7 +372,7 @@ static void atom_agent_task(void *arg)
     }
 }
 
-/* ── Outbound dispatch: routes response back to Discord ──────────────── */
+/* ── Outbound dispatch: routes response back to channel ──────────────── */
 
 static void outbound_dispatch_task(void *arg)
 {
@@ -386,6 +387,9 @@ static void outbound_dispatch_task(void *arg)
         if (strcmp(msg.channel, ATOM_CHAN_DISCORD) == 0) {
             /* meta holds the Discord interaction token */
             discord_follow_up(msg.meta, msg.content);
+        } else if (strcmp(msg.channel, ATOM_CHAN_LINE) == 0) {
+            /* meta holds LINE replyToken */
+            line_follow_up(msg.meta, msg.content);
         } else {
             /* CLI or other future channels */
             ESP_LOGI(TAG, "[%s] %s", msg.channel, msg.content);
@@ -459,6 +463,14 @@ void app_main(void)
     /* Visual/status + filesystem init after WiFi handshake attempt. */
     ESP_ERROR_CHECK(rgb_init());
     rgb_set(255, 0, 0);
+#if ATOM_ENABLE_DISPLAY
+    esp_err_t disp_err = display_init();
+    if (disp_err == ESP_OK) {
+        ESP_LOGI(TAG, "Display initialized");
+    } else {
+        ESP_LOGW(TAG, "Display init failed: %s", esp_err_to_name(disp_err));
+    }
+#endif
     ESP_ERROR_CHECK(init_spiffs());
 
     /* Subsystems */
@@ -499,9 +511,10 @@ void app_main(void)
             return;
         }
 
-        ESP_LOGI(TAG, "AtomClaw ready! Discord interaction endpoint: "
-                      "http://%s%s",
+        ESP_LOGI(TAG, "AtomClaw ready! Discord interaction endpoint: http://%s%s",
                  wifi_ip, ATOM_DISCORD_INTERACTION_PATH);
+        ESP_LOGI(TAG, "AtomClaw ready! LINE webhook endpoint:         http://%s%s",
+                 wifi_ip, ATOM_LINE_WEBHOOK_PATH);
     } else if (wifi_err == ESP_OK) {
         rgb_set(255, 128, 0);  /* orange: WiFi timeout */
     } else {

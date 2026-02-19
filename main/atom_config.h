@@ -75,6 +75,7 @@
 #define ATOM_WIFI_USE_DIAG_CONNECT     1
 /* 1: boot like wifi_diag (do not start subsystems unless WiFi is connected) */
 #define ATOM_WIFI_STRICT_DIAG_BOOT     0
+#define ATOM_ENABLE_DISPLAY            1
 #define ATOM_WIFI_MAX_RETRY             10
 #define ATOM_WIFI_RETRY_BASE_MS         1000
 #define ATOM_WIFI_RETRY_MAX_MS          30000
@@ -107,7 +108,7 @@
 #define ATOM_AGENT_MAX_TOOL_ITER        5
 #define ATOM_MAX_TOOL_CALLS             4
 /* Max LLM send tokens target */
-#define ATOM_LLM_MAX_TOKENS             2048
+#define ATOM_LLM_MAX_TOKENS             1024
 
 /* ── LLM ── */
 #define ATOM_LLM_DEFAULT_MODEL          "claude-haiku-4-5"
@@ -115,7 +116,7 @@
 #define ATOM_LLM_API_URL                "https://api.anthropic.com/v1/messages"
 #define ATOM_OPENAI_API_URL             "https://api.openai.com/v1/chat/completions"
 #define ATOM_LLM_API_VERSION            "2023-06-01"
-#define ATOM_LLM_STREAM_BUF_SIZE        (24 * 1024)
+#define ATOM_LLM_STREAM_BUF_SIZE        (12 * 1024)
 
 /* ── Message Bus ── */
 #define ATOM_BUS_QUEUE_LEN              4
@@ -177,3 +178,4 @@
 
 /* ── Channel identifier ── */
 #define ATOM_CHAN_DISCORD                "discord"
+#define ATOM_CHAN_LINE                   "line"

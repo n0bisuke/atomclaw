@@ -16,3 +16,4 @@ dependencies:
   #   public: true
   espressif/led_strip: ^2.4.1
   qrcode: "^0.1.0"
+  m5stack/M5Unified: "^0.2.7"

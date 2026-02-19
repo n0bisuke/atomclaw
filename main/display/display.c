@@ -52,6 +52,11 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static uint8_t backlight_percent = 50;
 static uint16_t *framebuffer = NULL;
 
+bool display_is_ready(void)
+{
+    return panel_handle != NULL;
+}
+
 typedef struct {
     int x;
     int y;
@@ -60,9 +65,6 @@ typedef struct {
 } qr_draw_ctx_t;
 
 static qr_draw_ctx_t s_qr_ctx;
-
-extern const uint8_t _binary_banner_320x172_rgb565_start[];
-extern const uint8_t _binary_banner_320x172_rgb565_end[];
 
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -74,6 +76,15 @@ static void fb_ensure(void)
     if (!framebuffer) {
         framebuffer = (uint16_t *)calloc(BANNER_W * BANNER_H, sizeof(uint16_t));
     }
+}
+
+static void fb_release_if_needed(void)
+{
+#if CONFIG_DEVICE_ATOMCLAW
+    /* Prioritize network/TLS stability on no-PSRAM targets by releasing large framebuffer. */
+    free(framebuffer);
+    framebuffer = NULL;
+#endif
 }
 
 static inline void fb_set_pixel(int x, int y, uint16_t color)
@@ -258,17 +269,40 @@ void display_show_banner(void)
         ESP_LOGW(TAG, "display not initialized");
         return;
     }
+    if (display_show_text("AtomClaw", "Display Ready") != ESP_OK) {
+        ESP_LOGW(TAG, "display banner draw failed");
+    }
+}
 
-    const uint8_t *start = _binary_banner_320x172_rgb565_start;
-    const uint8_t *end = _binary_banner_320x172_rgb565_end;
-    size_t len = (size_t)(end - start);
-    size_t expected = (size_t)BANNER_W * (size_t)BANNER_H * 2;
-    if (len < expected) {
-        ESP_LOGW(TAG, "banner data too small (%u < %u)", (unsigned)len, (unsigned)expected);
-        return;
+esp_err_t display_show_text(const char *title, const char *text)
+{
+    if (!panel_handle) {
+        ESP_LOGW(TAG, "display not initialized");
+        return ESP_ERR_INVALID_STATE;
     }
 
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, start));
+    fb_ensure();
+    if (!framebuffer) {
+        ESP_LOGW(TAG, "framebuffer alloc failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    if (!title) title = "AtomClaw";
+    if (!text) text = "";
+
+    const uint16_t color_bg = rgb565(0, 0, 0);
+    const uint16_t color_fg = rgb565(235, 235, 235);
+    const uint16_t color_title = rgb565(100, 200, 255);
+
+    fb_fill_rect(0, 0, BANNER_W, BANNER_H, color_bg);
+    fb_draw_text_clipped(8, 8, title, color_title, 14, 2, 0, BANNER_W);
+    fb_draw_text_clipped(8, 34, text, color_fg, 14, 2, 0, BANNER_W - 6);
+
+    ESP_RETURN_ON_ERROR(
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, framebuffer),
+        TAG, "draw bitmap failed");
+    fb_release_if_needed();
+    return ESP_OK;
 }
 
 static void qr_draw_cb(esp_qrcode_handle_t qrcode)
@@ -369,6 +403,7 @@ void display_show_config_screen(const char *qr_text, const char *ip_text,
     }
 
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, framebuffer));
+    fb_release_if_needed();
 }
 
 bool display_get_banner_center_rgb(uint8_t *r, uint8_t *g, uint8_t *b)
@@ -376,26 +411,8 @@ bool display_get_banner_center_rgb(uint8_t *r, uint8_t *g, uint8_t *b)
     if (!r || !g || !b) {
         return false;
     }
-
-    const uint8_t *start = _binary_banner_320x172_rgb565_start;
-    const uint8_t *end = _binary_banner_320x172_rgb565_end;
-    size_t len = (size_t)(end - start);
-    size_t expected = (size_t)BANNER_W * (size_t)BANNER_H * 2;
-    if (len < expected) {
-        return false;
-    }
-
-    size_t cx = BANNER_W / 2;
-    size_t cy = BANNER_H / 2;
-    size_t idx = (cy * BANNER_W + cx) * 2;
-    uint16_t pixel = (uint16_t)start[idx] | ((uint16_t)start[idx + 1] << 8);
-
-    uint8_t r5 = (pixel >> 11) & 0x1F;
-    uint8_t g6 = (pixel >> 5) & 0x3F;
-    uint8_t b5 = pixel & 0x1F;
-
-    *r = (uint8_t)((r5 * 255) / 31);
-    *g = (uint8_t)((g6 * 255) / 63);
-    *b = (uint8_t)((b5 * 255) / 31);
+    *r = 0;
+    *g = 0;
+    *b = 0;
     return true;
 }

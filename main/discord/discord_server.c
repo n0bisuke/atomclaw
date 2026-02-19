@@ -253,6 +253,11 @@ static esp_err_t line_reply_text(const char *reply_token, const char *text)
     return ret;
 }
 
+esp_err_t line_follow_up(const char *reply_token, const char *text)
+{
+    return line_reply_text(reply_token, text);
+}
+
 /* ── /interactions POST handler ──────────────────────────────────────── */
 
 static esp_err_t interactions_handler(httpd_req_t *req)
@@ -428,16 +433,30 @@ static esp_err_t line_webhook_handler(httpd_req_t *req)
     cJSON *ev = cJSON_GetArrayItem(events, 0);
     cJSON *reply_token = cJSON_GetObjectItem(ev, "replyToken");
     cJSON *type = cJSON_GetObjectItem(ev, "type");
+    cJSON *source = cJSON_GetObjectItem(ev, "source");
+    cJSON *user_id = source ? cJSON_GetObjectItem(source, "userId") : NULL;
     cJSON *message = cJSON_GetObjectItem(ev, "message");
     cJSON *msg_type = message ? cJSON_GetObjectItem(message, "type") : NULL;
     cJSON *text = message ? cJSON_GetObjectItem(message, "text") : NULL;
 
     if (type && type->valuestring && strcmp(type->valuestring, "message") == 0 &&
         msg_type && msg_type->valuestring && strcmp(msg_type->valuestring, "text") == 0 &&
-        reply_token && reply_token->valuestring && text && text->valuestring) {
-        char out[256];
-        snprintf(out, sizeof(out), "Echo: %.220s", text->valuestring);
-        line_reply_text(reply_token->valuestring, out);
+        reply_token && reply_token->valuestring &&
+        user_id && user_id->valuestring &&
+        text && text->valuestring) {
+        mimi_msg_t in = {0};
+        strncpy(in.channel, ATOM_CHAN_LINE, sizeof(in.channel) - 1);
+        strncpy(in.chat_id, user_id->valuestring, sizeof(in.chat_id) - 1);
+        strncpy(in.meta, reply_token->valuestring, sizeof(in.meta) - 1);
+        in.content = strdup(text->valuestring);
+        if (in.content) {
+            if (message_bus_push_inbound(&in) != ESP_OK) {
+                ESP_LOGW(TAG, "Inbound queue full, dropping LINE message");
+                free(in.content);
+            } else {
+                ESP_LOGI(TAG, "Queued LINE message from %s", in.chat_id);
+            }
+        }
     }
 
     cJSON_Delete(root);

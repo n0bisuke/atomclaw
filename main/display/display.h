@@ -13,7 +13,9 @@ extern "C" {
 #define DISPLAY_HEIGHT 172
 
 esp_err_t display_init(void);
+bool display_is_ready(void);
 void display_show_banner(void);
+esp_err_t display_show_text(const char *title, const char *text);
 void display_set_backlight_percent(uint8_t percent);
 uint8_t display_get_backlight_percent(void);
 void display_cycle_backlight(void);

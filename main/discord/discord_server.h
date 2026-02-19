@@ -42,3 +42,12 @@ esp_err_t discord_server_stop(void);
  * @return ESP_OK on success.
  */
 esp_err_t discord_follow_up(const char *interaction_token, const char *text);
+
+/**
+ * Send a LINE reply message using replyToken.
+ *
+ * @param reply_token  replyToken from LINE webhook event.
+ * @param text         Message text to reply.
+ * @return ESP_OK on success.
+ */
+esp_err_t line_follow_up(const char *reply_token, const char *text);

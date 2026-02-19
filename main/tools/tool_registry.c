@@ -2,6 +2,8 @@
 #include "tools/tool_web_search.h"
 #include "tools/tool_get_time.h"
 #include "tools/tool_files.h"
+#include "tools/tool_set_atom_led.h"
+#include "tools/tool_display_text.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -129,6 +131,38 @@ esp_err_t tool_registry_init(void)
         .execute = tool_list_dir_execute,
     };
     register_tool(&ld);
+
+    /* Register set_atom_led */
+    mimi_tool_t al = {
+        .name = "set_atom_led",
+        .description = "Set ATOMS3 built-in RGB LED. Use preset (red/green/blue/white/off) or explicit r,g,b values 0-255.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"preset\":{\"type\":\"string\",\"description\":\"Optional preset: red, green, blue, white, off\"},"
+            "\"r\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":255},"
+            "\"g\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":255},"
+            "\"b\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":255}"
+            "},"
+            "\"required\":[]}",
+        .execute = tool_set_atom_led_execute,
+    };
+    register_tool(&al);
+
+    /* Register display_text */
+    mimi_tool_t dt = {
+        .name = "display_text",
+        .description = "Render text on local display. Keep it very short and plain (no markdown/emojis/code blocks). Prefer simple ASCII words when possible, e.g. HELLO.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"title\":{\"type\":\"string\",\"description\":\"Optional screen title\"},"
+            "\"text\":{\"type\":\"string\",\"description\":\"Text to display (short plain text, no markdown/emojis)\"}"
+            "},"
+            "\"required\":[\"text\"]}",
+        .execute = tool_display_text_execute,
+    };
+    register_tool(&dt);
 
     build_tools_json();
 

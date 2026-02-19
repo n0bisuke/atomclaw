@@ -10,6 +10,8 @@ set(SHARED_SRCS
     "tools/tool_web_search.c"
     "tools/tool_get_time.c"
     "tools/tool_files.c"
+    "tools/tool_set_atom_led.c"
+    "tools/tool_display_text.c"
     "rgb/rgb.c"
 )
 
@@ -39,6 +41,7 @@ set(ATOM_SRCS
     "memory/atom_session.c"
     "discord/discord_server.c"
     "cloudflare/cf_history.c"
+    "display/display_m5unified.cpp"
 )
 
 # Shared dependencies
@@ -56,6 +59,8 @@ set(MIMI_DEPS
 # AtomClaw-specific dependencies (PSA crypto for Ed25519)
 set(ATOM_DEPS
     mbedtls
+    arduino
+    m5unified
 )
 
 if(BUILD_WIFI_DIAG)
