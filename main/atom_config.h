@@ -47,6 +47,14 @@
 #define ATOM_SECRET_CF_AUTH_TOKEN       ""
 #endif
 
+/* LINE Messaging API (optional) */
+#ifndef ATOM_SECRET_LINE_CHANNEL_ACCESS_TOKEN
+#define ATOM_SECRET_LINE_CHANNEL_ACCESS_TOKEN ""
+#endif
+#ifndef ATOM_SECRET_LINE_CHANNEL_SECRET
+#define ATOM_SECRET_LINE_CHANNEL_SECRET  ""
+#endif
+
 /* Brave Search (optional) */
 #ifndef ATOM_SECRET_SEARCH_KEY
 #define ATOM_SECRET_SEARCH_KEY          ""
@@ -72,6 +80,12 @@
 #define ATOM_WIFI_RETRY_MAX_MS          30000
 
 /* ── Discord HTTP server ── */
+/* Development fallback: skip Discord Ed25519 signature verification when PSA Ed25519 is unavailable.
+ * 1 = skip verification (easy local dev, NOT secure for public deployment)
+ * 0 = enforce signature verification
+ */
+#define ATOM_DISCORD_SKIP_SIGNATURE_VERIFY 1
+
 #define ATOM_DISCORD_HTTP_PORT          80
 #define ATOM_DISCORD_INTERACTION_PATH   "/interactions"
 /* Discord API base */
@@ -80,6 +94,11 @@
 #define ATOM_DISCORD_MAX_RESP_LEN       1900
 /* Deferred response timeout: must respond within 3 seconds */
 #define ATOM_DISCORD_DEFER_TIMEOUT_MS   2500
+
+/* LINE webhook endpoint */
+#define ATOM_LINE_WEBHOOK_PATH          "/line/webhook"
+/* Development fallback: skip LINE signature verification. */
+#define ATOM_LINE_SKIP_SIGNATURE_VERIFY 1
 
 /* ── Agent Loop ── */
 #define ATOM_AGENT_STACK                (16 * 1024)

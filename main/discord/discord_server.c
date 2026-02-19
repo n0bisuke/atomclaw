@@ -14,6 +14,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "cJSON.h"
+#include "mbedtls/md.h"
+#include "mbedtls/base64.h"
 
 /* Ed25519 verification via PSA Crypto API (ESP-IDF 5.x / mbedTLS 3.x).
  *
@@ -33,11 +35,17 @@ static const char *TAG = "discord";
 
 static char s_app_id[32]   = ATOM_SECRET_DISCORD_APP_ID;
 static char s_pub_key[65]  = ATOM_SECRET_DISCORD_PUBLIC_KEY;  /* 64-char hex */
+static char s_line_access_token[512] = ATOM_SECRET_LINE_CHANNEL_ACCESS_TOKEN;
+static char s_line_channel_secret[256] = ATOM_SECRET_LINE_CHANNEL_SECRET;
 static httpd_handle_t s_server = NULL;
+#if !ATOM_DISCORD_SKIP_SIGNATURE_VERIFY
 static bool s_psa_init = false;
+#endif
 
 /* ── Hex helpers ─────────────────────────────────────────────────────── */
 
+/* Used only when Discord signature verification is enabled. */
+#if !ATOM_DISCORD_SKIP_SIGNATURE_VERIFY
 static int hex_decode(const char *hex, uint8_t *out, size_t out_len)
 {
     size_t hex_len = strlen(hex);
@@ -94,9 +102,12 @@ static esp_err_t ed25519_verify_psa(const uint8_t *pubkey,
     }
     return ESP_OK;
 }
+#endif
 
 /* ── Discord signature verification ─────────────────────────────────── */
 
+/* Used only when signature verification is enabled. */
+#if !ATOM_DISCORD_SKIP_SIGNATURE_VERIFY
 static esp_err_t verify_discord_signature(
     const char *sig_hex,
     const char *timestamp,
@@ -126,6 +137,7 @@ static esp_err_t verify_discord_signature(
     free(msg);
     return ret;
 }
+#endif
 
 /* ── HTTP utility: read full request body ────────────────────────────── */
 
@@ -152,6 +164,95 @@ static esp_err_t read_body(httpd_req_t *req, char **out, size_t *out_len)
     return ESP_OK;
 }
 
+/* Used only when LINE signature verification is enabled. */
+#if !ATOM_LINE_SKIP_SIGNATURE_VERIFY
+static esp_err_t line_signature_is_valid(const char *signature_b64, const char *body)
+{
+    unsigned char hmac[32];
+    unsigned char b64[96];
+    size_t b64_len = 0;
+    int ret;
+
+    mbedtls_md_context_t ctx;
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!md) return ESP_FAIL;
+
+    mbedtls_md_init(&ctx);
+    ret = mbedtls_md_setup(&ctx, md, 1);
+    if (ret != 0) {
+        mbedtls_md_free(&ctx);
+        return ESP_FAIL;
+    }
+
+    ret = mbedtls_md_hmac_starts(&ctx,
+                                 (const unsigned char *)s_line_channel_secret,
+                                 strlen(s_line_channel_secret));
+    if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, (const unsigned char *)body, strlen(body));
+    if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, hmac);
+    mbedtls_md_free(&ctx);
+    if (ret != 0) return ESP_FAIL;
+
+    ret = mbedtls_base64_encode(b64, sizeof(b64), &b64_len, hmac, sizeof(hmac));
+    if (ret != 0) return ESP_FAIL;
+    b64[b64_len] = '\0';
+
+    if (strlen(signature_b64) != b64_len) return ESP_ERR_INVALID_ARG;
+    if (memcmp(signature_b64, b64, b64_len) != 0) return ESP_ERR_INVALID_ARG;
+    return ESP_OK;
+}
+#endif
+
+static esp_err_t line_reply_text(const char *reply_token, const char *text)
+{
+    if (!reply_token || !text || !s_line_access_token[0]) return ESP_ERR_INVALID_ARG;
+
+    cJSON *body = cJSON_CreateObject();
+    cJSON_AddStringToObject(body, "replyToken", reply_token);
+    cJSON *messages = cJSON_AddArrayToObject(body, "messages");
+    cJSON *msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "type", "text");
+    cJSON_AddStringToObject(msg, "text", text);
+    cJSON_AddItemToArray(messages, msg);
+    char *body_str = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    if (!body_str) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t cfg = {
+        .url               = "https://api.line.me/v2/bot/message/reply",
+        .method            = HTTP_METHOD_POST,
+        .timeout_ms        = 10000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) {
+        free(body_str);
+        return ESP_FAIL;
+    }
+
+    char auth[600];
+    snprintf(auth, sizeof(auth), "Bearer %s", s_line_access_token);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_http_client_set_post_field(client, body_str, strlen(body_str));
+
+    esp_err_t ret = esp_http_client_perform(client);
+    if (ret == ESP_OK) {
+        int code = esp_http_client_get_status_code(client);
+        if (code < 200 || code >= 300) {
+            ESP_LOGW(TAG, "LINE reply HTTP %d", code);
+            ret = ESP_FAIL;
+        } else {
+            ESP_LOGI(TAG, "LINE reply OK");
+        }
+    } else {
+        ESP_LOGW(TAG, "LINE reply failed: %s", esp_err_to_name(ret));
+    }
+
+    esp_http_client_cleanup(client);
+    free(body_str);
+    return ret;
+}
+
 /* ── /interactions POST handler ──────────────────────────────────────── */
 
 static esp_err_t interactions_handler(httpd_req_t *req)
@@ -159,6 +260,16 @@ static esp_err_t interactions_handler(httpd_req_t *req)
     char sig_hex[130]  = {0};
     char timestamp[32] = {0};
 
+#if ATOM_DISCORD_SKIP_SIGNATURE_VERIFY
+    if (httpd_req_get_hdr_value_str(req, "X-Signature-Ed25519",
+                                    sig_hex, sizeof(sig_hex)) != ESP_OK) {
+        ESP_LOGW(TAG, "No X-Signature-Ed25519 header (dev skip mode)");
+    }
+    if (httpd_req_get_hdr_value_str(req, "X-Signature-Timestamp",
+                                    timestamp, sizeof(timestamp)) != ESP_OK) {
+        ESP_LOGW(TAG, "No X-Signature-Timestamp header (dev skip mode)");
+    }
+#else
     if (httpd_req_get_hdr_value_str(req, "X-Signature-Ed25519",
                                     sig_hex, sizeof(sig_hex)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Missing signature");
@@ -169,6 +280,7 @@ static esp_err_t interactions_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Missing timestamp");
         return ESP_FAIL;
     }
+#endif
 
     char *body    = NULL;
     size_t body_len = 0;
@@ -178,6 +290,9 @@ static esp_err_t interactions_handler(httpd_req_t *req)
     }
 
     /* Ed25519 verify (skip only if no key configured, e.g. during local dev) */
+#if ATOM_DISCORD_SKIP_SIGNATURE_VERIFY
+    ESP_LOGW(TAG, "ATOM_DISCORD_SKIP_SIGNATURE_VERIFY=1: skipping signature verification (dev only)");
+#else
     if (s_pub_key[0] != '\0') {
         esp_err_t verr = verify_discord_signature(sig_hex, timestamp,
                                                    (uint8_t *)body, body_len);
@@ -189,6 +304,7 @@ static esp_err_t interactions_handler(httpd_req_t *req)
     } else {
         ESP_LOGW(TAG, "No public key — skipping Ed25519 (dev mode only)");
     }
+#endif
 
     cJSON *root = cJSON_Parse(body);
     free(body);
@@ -269,12 +385,79 @@ static esp_err_t interactions_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t line_webhook_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    size_t body_len = 0;
+    if (read_body(req, &body, &body_len) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad body");
+        return ESP_FAIL;
+    }
+
+#if ATOM_LINE_SKIP_SIGNATURE_VERIFY
+    ESP_LOGW(TAG, "ATOM_LINE_SKIP_SIGNATURE_VERIFY=1: skipping LINE signature verification (dev only)");
+#else
+    char sig[256] = {0};
+    if (httpd_req_get_hdr_value_str(req, "x-line-signature", sig, sizeof(sig)) != ESP_OK) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Missing LINE signature");
+        return ESP_FAIL;
+    }
+    if (line_signature_is_valid(sig, body) != ESP_OK) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Invalid LINE signature");
+        return ESP_FAIL;
+    }
+#endif
+
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *events = cJSON_GetObjectItem(root, "events");
+    if (!events || !cJSON_IsArray(events) || cJSON_GetArraySize(events) == 0) {
+        cJSON_Delete(root);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"ok\":true}");
+        return ESP_OK;
+    }
+
+    cJSON *ev = cJSON_GetArrayItem(events, 0);
+    cJSON *reply_token = cJSON_GetObjectItem(ev, "replyToken");
+    cJSON *type = cJSON_GetObjectItem(ev, "type");
+    cJSON *message = cJSON_GetObjectItem(ev, "message");
+    cJSON *msg_type = message ? cJSON_GetObjectItem(message, "type") : NULL;
+    cJSON *text = message ? cJSON_GetObjectItem(message, "text") : NULL;
+
+    if (type && type->valuestring && strcmp(type->valuestring, "message") == 0 &&
+        msg_type && msg_type->valuestring && strcmp(msg_type->valuestring, "text") == 0 &&
+        reply_token && reply_token->valuestring && text && text->valuestring) {
+        char out[256];
+        snprintf(out, sizeof(out), "Echo: %.220s", text->valuestring);
+        line_reply_text(reply_token->valuestring, out);
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
 /* ── HTTP server lifecycle ───────────────────────────────────────────── */
 
 static const httpd_uri_t s_interactions_uri = {
     .uri     = ATOM_DISCORD_INTERACTION_PATH,
     .method  = HTTP_POST,
     .handler = interactions_handler,
+};
+
+static const httpd_uri_t s_line_webhook_uri = {
+    .uri     = ATOM_LINE_WEBHOOK_PATH,
+    .method  = HTTP_POST,
+    .handler = line_webhook_handler,
 };
 
 esp_err_t discord_server_init(void)
@@ -289,6 +472,9 @@ esp_err_t discord_server_init(void)
         nvs_close(nvs);
     }
     ESP_LOGI(TAG, "Discord init: app_id=%s pub_key=%.16s...", s_app_id, s_pub_key);
+    ESP_LOGI(TAG, "LINE init: token=%s secret=%s",
+             s_line_access_token[0] ? "set" : "empty",
+             s_line_channel_secret[0] ? "set" : "empty");
     return ESP_OK;
 }
 
@@ -305,6 +491,7 @@ esp_err_t discord_server_start(void)
         return ret;
     }
     httpd_register_uri_handler(s_server, &s_interactions_uri);
+    httpd_register_uri_handler(s_server, &s_line_webhook_uri);
     ESP_LOGI(TAG, "Discord HTTP server on port %d", ATOM_DISCORD_HTTP_PORT);
     return ESP_OK;
 }

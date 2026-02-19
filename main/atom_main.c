@@ -115,6 +115,8 @@ static esp_err_t wifi_connect_diag_style(uint32_t timeout_ms)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* Hotspot/AP handshake stability: keep station fully awake during auth/assoc. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     TickType_t ticks = (timeout_ms == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
     EventBits_t bits = xEventGroupWaitBits(s_diag_wifi_event_group,
