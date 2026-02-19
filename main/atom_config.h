@@ -61,6 +61,12 @@
 #endif
 
 /* ── WiFi ── */
+/* 0: always use build-time secrets from atom_secrets.h, 1: allow NVS override from wifi_set */
+#define ATOM_WIFI_USE_NVS              0
+/* 1: use wifi_diag-like direct connect path in atom_main (bypass wifi_manager for initial connect) */
+#define ATOM_WIFI_USE_DIAG_CONNECT     1
+/* 1: boot like wifi_diag (do not start subsystems unless WiFi is connected) */
+#define ATOM_WIFI_STRICT_DIAG_BOOT     0
 #define ATOM_WIFI_MAX_RETRY             10
 #define ATOM_WIFI_RETRY_BASE_MS         1000
 #define ATOM_WIFI_RETRY_MAX_MS          30000

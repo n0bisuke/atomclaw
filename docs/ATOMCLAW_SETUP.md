@@ -296,20 +296,20 @@ Discordのサーバーで `/chat` が使えるようになるまで数分かか�
 atom> help                              # コマンド一覧表示
 
 # WiFi
-atom> wifi_set MyNewSSID MyPassword     # WiFiを変更して再接続
+atom> wifi_set MyNewSSID MyPassword     # WiFiを変更
+atom> wifi_set FREE-SPOT                # オープンWiFi（パスワードなし）
+atom> wifi_status
+atom> wifi_scan
 
 # LLM API
 atom> set_api_key sk-ant-api03-xxxxx    # APIキーを変更
 atom> set_model claude-haiku-4-5        # モデルを変更
 atom> set_model_provider anthropic      # プロバイダー切替（anthropic|openai）
 
-# Discord
-atom> set_discord_app_id 123456789...   # Application IDを変更
-atom> set_discord_pub_key abcdef...     # Public Keyを変更（64文字hex）
-
-# Cloudflare
-atom> set_cf_url https://xxx.workers.dev    # Worker URLを設定
-atom> set_cf_token mytoken                  # 認証トークンを設定
+# 検索 / プロキシ
+atom> set_search_key bs-xxxxxxx             # Brave Search APIキー
+atom> set_proxy 192.168.1.10 7897           # HTTP Proxyを設定
+atom> clear_proxy                           # Proxy設定を解除
 
 # その他
 atom> config_show                       # 全設定を表示（キーはマスク）

@@ -87,8 +87,14 @@ static int cmd_wifi_set(int argc, char **argv)
         arg_print_errors(stderr, wifi_set_args.end, argv[0]);
         return 1;
     }
-    wifi_manager_set_credentials(wifi_set_args.ssid->sval[0],
-                                  wifi_set_args.password->sval[0]);
+
+    const char *password = "";
+    if (wifi_set_args.password->count > 0 &&
+        wifi_set_args.password->sval[0] != NULL) {
+        password = wifi_set_args.password->sval[0];
+    }
+
+    wifi_manager_set_credentials(wifi_set_args.ssid->sval[0], password);
     printf("WiFi credentials saved. Restart to apply.\n");
     return 0;
 }
@@ -435,11 +441,11 @@ esp_err_t serial_cli_init(void)
 
     /* wifi_set */
     wifi_set_args.ssid = arg_str1(NULL, NULL, "<ssid>", "WiFi SSID");
-    wifi_set_args.password = arg_str1(NULL, NULL, "<password>", "WiFi password");
+    wifi_set_args.password = arg_str0(NULL, NULL, "[password]", "WiFi password (omit for open networks)");
     wifi_set_args.end = arg_end(2);
     esp_console_cmd_t wifi_set_cmd = {
         .command = "wifi_set",
-        .help = "Set WiFi SSID and password",
+        .help = "Set WiFi SSID and optional password",
         .func = &cmd_wifi_set,
         .argtable = &wifi_set_args,
     };

@@ -1,8 +1,6 @@
 # AtomClaw デバイスセットアップ
 
-ESP32-S3ボードへのビルド・書き込み手順です。
-
-**ビルドツールは PlatformIO と ESP-IDF (idf.py) のどちらでも使えます。**
+ESP32-S3ボードへのビルド・書き込み手順です（PlatformIO を使用）。
 
 > サービス設定（Discord・Cloudflare・APIキー等）は [ATOMCLAW_SETUP.md](ATOMCLAW_SETUP.md) を参照してください。
 > ライセンスと帰属メモは [LICENSE_NOTES.md](LICENSE_NOTES.md) を参照してください。
@@ -55,8 +53,6 @@ Discord・Cloudflare等のその他の項目は後から設定できます（空
 
 ## 3. ビルド・書き込み
 
-### パターンA: PlatformIO（推奨・簡単）
-
 ESP-IDF のインストール不要。初回ビルド時に自動でダウンロードされます。
 
 ```bash
@@ -78,34 +74,6 @@ pio device monitor -e atomclaw
 ```bash
 pio run -e atomclaw -t upload --upload-port /dev/cu.usbmodem11401
 ```
-
----
-
-### パターンB: ESP-IDF / idf.py
-
-ESP-IDF v5.x がインストール・セットアップ済みであればそのまま使えます。
-
-```bash
-# ターゲットを ESP32-S3 に設定
-idf.py set-target esp32s3
-
-# ビルド（CMakeLists.txt が AtomClaw 用 sdkconfig を自動で適用）
-idf.py build
-
-# 書き込み＆モニター
-idf.py flash monitor
-```
-
-ポートを明示する場合:
-
-```bash
-idf.py -p /dev/cu.usbmodem11401 flash monitor
-```
-
-> MimiClaw をビルドする場合のみ `-DBUILD_MIMICLAW=1` を明示してください:
-> ```bash
-> idf.py -DBUILD_MIMICLAW=1 build
-> ```
 
 ---
 
@@ -140,6 +108,37 @@ I (5700) atomclaw: AtomClaw ready! Discord interaction endpoint: http://192.168.
 ```
 
 表示された **IPアドレスをメモ**しておきます（Discord連携時に使用します）。
+
+---
+
+## 6. シリアルCLIコマンド（AtomClaw）
+
+接続中に `atom>` プロンプトで `help` を実行すると一覧が表示されます。
+
+```text
+atom> help
+```
+
+よく使うコマンド:
+
+```text
+# WiFi
+atom> wifi_set <SSID> [PASS]         # オープンWiFiはPASS省略可
+atom> wifi_status
+atom> wifi_scan
+
+# LLM
+atom> set_api_key <KEY>
+atom> set_model <MODEL>
+atom> set_model_provider <anthropic|openai>
+
+# 設定確認/初期化
+atom> config_show
+atom> config_reset
+atom> restart
+```
+
+`config_reset` はNVS設定（`wifi_set` などで保存した値）を消去し、再起動後に `atom_secrets.h` のビルド時設定へ戻します。
 
 ---
 

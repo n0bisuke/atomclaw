@@ -9,6 +9,8 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_spiffs.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
 
@@ -27,6 +29,115 @@
 #include "rgb/rgb.h"
 
 static const char *TAG = "atomclaw";
+
+#if ATOM_WIFI_USE_DIAG_CONNECT
+#define DIAG_WIFI_CONNECTED_BIT  BIT0
+#define DIAG_WIFI_FAIL_BIT       BIT1
+
+static EventGroupHandle_t s_diag_wifi_event_group;
+static char s_diag_ip_str[16] = "0.0.0.0";
+static int s_diag_retry_count = 0;
+
+static const char *diag_wifi_reason_to_str(wifi_err_reason_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE";
+    case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+    case WIFI_REASON_ASSOC_EXPIRE: return "ASSOC_EXPIRE";
+    case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+    case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
+    default: return "UNKNOWN";
+    }
+}
+
+static void diag_wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *disc = (wifi_event_sta_disconnected_t *)data;
+        if (disc) {
+            ESP_LOGW(TAG, "[diag-connect] Disconnected (reason=%d:%s)",
+                     disc->reason, diag_wifi_reason_to_str(disc->reason));
+        } else {
+            ESP_LOGW(TAG, "[diag-connect] Disconnected (unknown)");
+        }
+        s_diag_retry_count++;
+        ESP_LOGW(TAG, "[diag-connect] retry %d (immediate)", s_diag_retry_count);
+        esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
+        snprintf(s_diag_ip_str, sizeof(s_diag_ip_str), IPSTR, IP2STR(&ev->ip_info.ip));
+        ESP_LOGI(TAG, "[diag-connect] Connected! IP=%s", s_diag_ip_str);
+        xEventGroupSetBits(s_diag_wifi_event_group, DIAG_WIFI_CONNECTED_BIT);
+    }
+}
+
+static esp_err_t wifi_connect_diag_style(uint32_t timeout_ms)
+{
+    if (ATOM_SECRET_WIFI_SSID[0] == '\0') {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    s_diag_wifi_event_group = xEventGroupCreate();
+    if (!s_diag_wifi_event_group) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &diag_wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &diag_wifi_event_handler, NULL, NULL));
+
+    wifi_config_t wc = {0};
+    strncpy((char *)wc.sta.ssid, ATOM_SECRET_WIFI_SSID, sizeof(wc.sta.ssid) - 1);
+    strncpy((char *)wc.sta.password, ATOM_SECRET_WIFI_PASS, sizeof(wc.sta.password) - 1);
+    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wc.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wc.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wc.sta.pmf_cfg.capable = true;
+    wc.sta.pmf_cfg.required = false;
+
+    ESP_LOGI(TAG, "[diag-connect] Connecting to SSID: %s (source=build, pass_len=%d)",
+             wc.sta.ssid, (int)strlen((char *)wc.sta.password));
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    TickType_t ticks = (timeout_ms == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    EventBits_t bits = xEventGroupWaitBits(s_diag_wifi_event_group,
+                                           DIAG_WIFI_CONNECTED_BIT | DIAG_WIFI_FAIL_BIT,
+                                           pdFALSE, pdFALSE, ticks);
+    if (bits & DIAG_WIFI_CONNECTED_BIT) {
+        return ESP_OK;
+    }
+    return ESP_ERR_TIMEOUT;
+}
+#endif
+
+static void *alloc_prefer_psram(size_t size, const char *name)
+{
+    void *p = heap_caps_calloc(1, size, MALLOC_CAP_SPIRAM);
+    if (p) return p;
+
+    p = calloc(1, size);
+    if (p) {
+        ESP_LOGW(TAG, "%s allocated in internal RAM (PSRAM unavailable)", name);
+    }
+    return p;
+}
 
 /* ── NVS init ────────────────────────────────────────────────────────── */
 
@@ -68,14 +179,18 @@ static void atom_agent_task(void *arg)
 {
     ESP_LOGI(TAG, "AtomClaw agent started on core %d", xPortGetCoreID());
 
-    /* Allocate PSRAM buffers */
-    char *system_prompt = heap_caps_calloc(1, ATOM_CONTEXT_BUF_SIZE,    MALLOC_CAP_SPIRAM);
-    char *history_json  = heap_caps_calloc(1, ATOM_LLM_STREAM_BUF_SIZE, MALLOC_CAP_SPIRAM);
-    char *tool_output   = heap_caps_calloc(1, 8 * 1024,                  MALLOC_CAP_SPIRAM);
-    char *cf_summary    = heap_caps_calloc(1, ATOM_CF_SUMMARY_MAX_LEN,   MALLOC_CAP_SPIRAM);
+    /* Prefer PSRAM; fallback to internal RAM so ATOMS3 (no PSRAM) can still run. */
+    char *system_prompt = alloc_prefer_psram(ATOM_CONTEXT_BUF_SIZE, "system_prompt");
+    char *history_json  = alloc_prefer_psram(ATOM_LLM_STREAM_BUF_SIZE, "history_json");
+    char *tool_output   = alloc_prefer_psram(8 * 1024, "tool_output");
+    char *cf_summary    = alloc_prefer_psram(ATOM_CF_SUMMARY_MAX_LEN, "cf_summary");
 
     if (!system_prompt || !history_json || !tool_output || !cf_summary) {
-        ESP_LOGE(TAG, "PSRAM allocation failed");
+        ESP_LOGE(TAG, "Agent buffer allocation failed");
+        free(system_prompt);
+        free(history_json);
+        free(tool_output);
+        free(cf_summary);
         vTaskDelete(NULL);
         return;
     }
@@ -221,7 +336,7 @@ static void atom_agent_task(void *arg)
                      msg.chat_id, cf_res.history_count);
 
             /* 直近履歴から要約プロンプトを組み立てる */
-            char *sum_history = heap_caps_calloc(1, 4096, MALLOC_CAP_SPIRAM);
+            char *sum_history = alloc_prefer_psram(4096, "sum_history");
             if (sum_history) {
                 atom_session_get_history_json(msg.chat_id, sum_history, 4096, 0);
 
@@ -294,20 +409,60 @@ void app_main(void)
     ESP_LOGI(TAG, "PSRAM:         %d bytes",
              (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    /* RGB: red during boot */
-    ESP_ERROR_CHECK(rgb_init());
-    rgb_set(255, 0, 0);
-
     /* Core init */
     ESP_ERROR_CHECK(init_nvs());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* WiFi first: keep startup path as close as possible to wifi_diag. */
+    esp_err_t wifi_err = ESP_OK;
+    bool wifi_connected = false;
+    const char *wifi_ip = "0.0.0.0";
+#if ATOM_WIFI_USE_DIAG_CONNECT
+    ESP_LOGW(TAG, "ATOM_WIFI_USE_DIAG_CONNECT=1: using direct wifi_diag-style connect path");
+    wifi_err = wifi_connect_diag_style(30000);
+    if (wifi_err == ESP_OK) {
+        wifi_connected = true;
+        wifi_ip = s_diag_ip_str;
+        ESP_LOGI(TAG, "WiFi connected: %s", wifi_ip);
+    } else if (wifi_err == ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "No WiFi credentials. Set ATOM_SECRET_WIFI_SSID in atom_secrets.h");
+    } else {
+        ESP_LOGW(TAG, "WiFi timeout/failure in diag-connect path");
+    }
+#else
+    ESP_ERROR_CHECK(wifi_manager_init());
+    wifi_err = wifi_manager_start();
+    if (wifi_err == ESP_OK) {
+        ESP_LOGI(TAG, "Waiting for WiFi...");
+        if (wifi_manager_wait_connected(30000) == ESP_OK) {
+            wifi_connected = true;
+            wifi_ip = wifi_manager_get_ip();
+            ESP_LOGI(TAG, "WiFi connected: %s", wifi_ip);
+        } else {
+            ESP_LOGW(TAG, "WiFi timeout. Check credentials in atom_secrets.h");
+        }
+    } else {
+        ESP_LOGW(TAG, "No WiFi credentials. Set ATOM_SECRET_WIFI_SSID in atom_secrets.h");
+    }
+#endif
+
+#if ATOM_WIFI_STRICT_DIAG_BOOT
+    if (!wifi_connected) {
+        ESP_LOGE(TAG, "STRICT_DIAG_BOOT=1: WiFi not connected, skipping subsystem startup");
+        ESP_LOGE(TAG, "This mode mirrors wifi_diag-style boot for root-cause isolation");
+        return;
+    }
+#endif
+
+    /* Visual/status + filesystem init after WiFi handshake attempt. */
+    ESP_ERROR_CHECK(rgb_init());
+    rgb_set(255, 0, 0);
     ESP_ERROR_CHECK(init_spiffs());
 
     /* Subsystems */
     ESP_ERROR_CHECK(message_bus_init());
     ESP_ERROR_CHECK(memory_store_init());
     ESP_ERROR_CHECK(atom_session_init());
-    ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(http_proxy_init());
     ESP_ERROR_CHECK(llm_proxy_init());
     ESP_ERROR_CHECK(tool_registry_init());
@@ -319,45 +474,36 @@ void app_main(void)
     ESP_ERROR_CHECK(discord_server_init());
     ESP_ERROR_CHECK(serial_cli_init());
 
-    /* WiFi */
-    esp_err_t wifi_err = wifi_manager_start();
-    if (wifi_err == ESP_OK) {
-        ESP_LOGI(TAG, "Waiting for WiFi...");
-        if (wifi_manager_wait_connected(30000) == ESP_OK) {
-            ESP_LOGI(TAG, "WiFi connected: %s", wifi_manager_get_ip());
+    if (wifi_connected) {
+        /* RGB: green when ready */
+        rgb_set(0, 255, 0);
 
-            /* RGB: green when ready */
-            rgb_set(0, 255, 0);
+        /* Start Discord HTTP server */
+        ESP_ERROR_CHECK(discord_server_start());
 
-            /* Start Discord HTTP server */
-            ESP_ERROR_CHECK(discord_server_start());
+        /* Start agent loop */
+        BaseType_t agent_ok = xTaskCreatePinnedToCore(atom_agent_task, "atom_agent",
+                                                       ATOM_AGENT_STACK, NULL,
+                                                       ATOM_AGENT_PRIO, NULL, ATOM_AGENT_CORE);
 
-            /* Start agent loop */
-            BaseType_t agent_ok = xTaskCreatePinnedToCore(atom_agent_task, "atom_agent",
-                                                           ATOM_AGENT_STACK, NULL,
-                                                           ATOM_AGENT_PRIO, NULL, ATOM_AGENT_CORE);
-
-            /* Start outbound dispatcher */
-            BaseType_t out_ok = xTaskCreatePinnedToCore(outbound_dispatch_task, "outbound",
-                                                         ATOM_OUTBOUND_STACK, NULL,
-                                                         ATOM_OUTBOUND_PRIO, NULL, ATOM_OUTBOUND_CORE);
-            if (agent_ok != pdPASS || out_ok != pdPASS) {
-                ESP_LOGE(TAG, "Failed to create tasks: agent=%d outbound=%d",
-                         (int)agent_ok, (int)out_ok);
-                rgb_set(255, 0, 0);
-                return;
-            }
-
-            ESP_LOGI(TAG, "AtomClaw ready! Discord interaction endpoint: "
-                          "http://%s%s",
-                     wifi_manager_get_ip(), ATOM_DISCORD_INTERACTION_PATH);
-        } else {
-            rgb_set(255, 128, 0);  /* orange: WiFi timeout */
-            ESP_LOGW(TAG, "WiFi timeout. Check credentials in atom_secrets.h");
+        /* Start outbound dispatcher */
+        BaseType_t out_ok = xTaskCreatePinnedToCore(outbound_dispatch_task, "outbound",
+                                                     ATOM_OUTBOUND_STACK, NULL,
+                                                     ATOM_OUTBOUND_PRIO, NULL, ATOM_OUTBOUND_CORE);
+        if (agent_ok != pdPASS || out_ok != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create tasks: agent=%d outbound=%d",
+                     (int)agent_ok, (int)out_ok);
+            rgb_set(255, 0, 0);
+            return;
         }
+
+        ESP_LOGI(TAG, "AtomClaw ready! Discord interaction endpoint: "
+                      "http://%s%s",
+                 wifi_ip, ATOM_DISCORD_INTERACTION_PATH);
+    } else if (wifi_err == ESP_OK) {
+        rgb_set(255, 128, 0);  /* orange: WiFi timeout */
     } else {
-        rgb_set(255, 0, 0);
-        ESP_LOGW(TAG, "No WiFi credentials. Set ATOM_SECRET_WIFI_SSID in atom_secrets.h");
+        rgb_set(255, 0, 0);    /* red: no credentials */
     }
 
     ESP_LOGI(TAG, "CLI ready. Type 'help' for commands.");

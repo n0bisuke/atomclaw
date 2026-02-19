@@ -58,7 +58,19 @@ set(ATOM_DEPS
     mbedtls
 )
 
-if(CONFIG_DEVICE_ATOMCLAW)
+if(BUILD_WIFI_DIAG)
+    # ── WiFi diagnostics build ─────────────────────────────────
+    message(STATUS "Building WiFi diagnostics firmware")
+
+    idf_component_register(
+        SRCS
+            "wifi_diag_main.c"
+        INCLUDE_DIRS
+            "."
+        REQUIRES
+            nvs_flash esp_wifi esp_netif esp_event
+    )
+elseif(BUILD_ATOMCLAW OR CONFIG_DEVICE_ATOMCLAW)
     # ── AtomClaw build ──────────────────────────────────────────
     message(STATUS "Building AtomClaw (8MB Flash / Discord / Cloudflare)")
 

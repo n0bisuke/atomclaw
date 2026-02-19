@@ -6,7 +6,20 @@ cmake_minimum_required(VERSION 3.16)
 # idf.py users can still override with -DSDKCONFIG_DEFAULTS=... on the command line.
 if(NOT DEFINED SDKCONFIG_DEFAULTS)
     set(_d "${CMAKE_CURRENT_SOURCE_DIR}")
-    if(BUILD_MIMICLAW)
+    if(BUILD_WIFI_DIAG)
+        set(SDKCONFIG_DEFAULTS
+            "${_d}/sdkconfig.defaults"
+            "${_d}/sdkconfig.defaults.esp32s3"
+            "${_d}/sdkconfig.defaults.wifi_diag"
+        )
+    elseif(BUILD_ATOMCLAW_DIAGCFG)
+        # AtomClaw code with wifi_diag-like sdkconfig defaults for A/B comparison.
+        set(SDKCONFIG_DEFAULTS
+            "${_d}/sdkconfig.defaults"
+            "${_d}/sdkconfig.defaults.esp32s3"
+            "${_d}/sdkconfig.defaults.wifi_diag"
+        )
+    elseif(BUILD_MIMICLAW)
         set(SDKCONFIG_DEFAULTS
             "${_d}/sdkconfig.defaults"
             "${_d}/sdkconfig.defaults.esp32s3"

@@ -1,5 +1,5 @@
 #include "message_bus.h"
-#include "mimi_config.h"
+#include "device_config.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -10,15 +10,15 @@ static QueueHandle_t s_outbound_queue;
 
 esp_err_t message_bus_init(void)
 {
-    s_inbound_queue = xQueueCreate(MIMI_BUS_QUEUE_LEN, sizeof(mimi_msg_t));
-    s_outbound_queue = xQueueCreate(MIMI_BUS_QUEUE_LEN, sizeof(mimi_msg_t));
+    s_inbound_queue = xQueueCreate(CFG_BUS_QUEUE_LEN, sizeof(mimi_msg_t));
+    s_outbound_queue = xQueueCreate(CFG_BUS_QUEUE_LEN, sizeof(mimi_msg_t));
 
     if (!s_inbound_queue || !s_outbound_queue) {
         ESP_LOGE(TAG, "Failed to create message queues");
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "Message bus initialized (queue depth %d)", MIMI_BUS_QUEUE_LEN);
+    ESP_LOGI(TAG, "Message bus initialized (queue depth %d)", CFG_BUS_QUEUE_LEN);
     return ESP_OK;
 }
 

@@ -9,7 +9,8 @@
  * AtomClaw: In-RAM ring buffer session manager.
  *
  * Stores the last ATOM_SESSION_MAX_EXCHANGES (default 3) conversation
- * exchanges (user + assistant pairs) per Discord user in PSRAM.
+ * exchanges (user + assistant pairs) per Discord user in RAM.
+ * Prefers PSRAM and falls back to internal RAM when PSRAM is unavailable.
  *
  * - No SPIFFS writes (Flash preservation)
  * - Thread-safe via FreeRTOS mutex
@@ -20,7 +21,7 @@
 #define ATOM_SESSION_MAX_USERS  8
 
 /**
- * Initialize the session module (allocates PSRAM buffers, creates mutex).
+ * Initialize the session module (allocates RAM buffers, creates mutex).
  */
 esp_err_t atom_session_init(void);
 

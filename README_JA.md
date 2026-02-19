@@ -50,6 +50,44 @@ pio device monitor -e atomclaw
 - 命名移行メモ: `docs/NAMING_NOTES.md`
 - ライセンスメモ: `docs/LICENSE_NOTES.md`
 
+## シリアルCLI（AtomClaw）
+
+シリアルモニターで `help` を実行するとコマンド一覧を表示できます。
+
+```text
+atom> help
+```
+
+主なコマンド:
+
+```text
+# WiFi
+atom> wifi_set <SSID> [PASS]         # オープンWiFiはPASS省略可
+atom> wifi_status
+atom> wifi_scan
+
+# LLM
+atom> set_api_key <KEY>
+atom> set_model <MODEL>
+atom> set_model_provider <anthropic|openai>
+
+# Tools / Memory
+atom> set_search_key <KEY>
+atom> memory_read
+atom> memory_write "<TEXT>"
+atom> session_clear <USER_ID>
+atom> heap_info
+
+# Proxy
+atom> set_proxy <HOST> <PORT>
+atom> clear_proxy
+
+# Config
+atom> config_show
+atom> config_reset
+atom> restart
+```
+
 ## リポジトリ補足
 
 - 共有モジュールには `MIMI_*` 命名が一部残っています。

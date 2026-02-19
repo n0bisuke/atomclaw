@@ -1,5 +1,5 @@
 #include "llm_proxy.h"
-#include "mimi_config.h"
+#include "device_config.h"
 #include "proxy/http_proxy.h"
 
 #include <string.h>
@@ -14,8 +14,8 @@
 static const char *TAG = "llm";
 
 static char s_api_key[128] = {0};
-static char s_model[64] = MIMI_LLM_DEFAULT_MODEL;
-static char s_provider[16] = MIMI_LLM_PROVIDER_DEFAULT;
+static char s_model[64] = CFG_LLM_DEFAULT_MODEL;
+static char s_provider[16] = CFG_LLM_PROVIDER_DEFAULT;
 
 static void safe_copy(char *dst, size_t dst_size, const char *src)
 {
@@ -87,7 +87,7 @@ static bool provider_is_openai(void)
 
 static const char *llm_api_url(void)
 {
-    return provider_is_openai() ? MIMI_OPENAI_API_URL : MIMI_LLM_API_URL;
+    return provider_is_openai() ? CFG_OPENAI_API_URL : CFG_LLM_API_URL;
 }
 
 static const char *llm_api_host(void)
@@ -105,32 +105,32 @@ static const char *llm_api_path(void)
 esp_err_t llm_proxy_init(void)
 {
     /* Start with build-time defaults */
-    if (MIMI_SECRET_API_KEY[0] != '\0') {
-        safe_copy(s_api_key, sizeof(s_api_key), MIMI_SECRET_API_KEY);
+    if (CFG_SECRET_API_KEY[0] != '\0') {
+        safe_copy(s_api_key, sizeof(s_api_key), CFG_SECRET_API_KEY);
     }
-    if (MIMI_SECRET_MODEL[0] != '\0') {
-        safe_copy(s_model, sizeof(s_model), MIMI_SECRET_MODEL);
+    if (CFG_SECRET_MODEL[0] != '\0') {
+        safe_copy(s_model, sizeof(s_model), CFG_SECRET_MODEL);
     }
-    if (MIMI_SECRET_MODEL_PROVIDER[0] != '\0') {
-        safe_copy(s_provider, sizeof(s_provider), MIMI_SECRET_MODEL_PROVIDER);
+    if (CFG_SECRET_MODEL_PROVIDER[0] != '\0') {
+        safe_copy(s_provider, sizeof(s_provider), CFG_SECRET_MODEL_PROVIDER);
     }
 
     /* NVS overrides take highest priority (set via CLI) */
     nvs_handle_t nvs;
-    if (nvs_open(MIMI_NVS_LLM, NVS_READONLY, &nvs) == ESP_OK) {
+    if (nvs_open(CFG_NVS_LLM, NVS_READONLY, &nvs) == ESP_OK) {
         char tmp[128] = {0};
         size_t len = sizeof(tmp);
-        if (nvs_get_str(nvs, MIMI_NVS_KEY_API_KEY, tmp, &len) == ESP_OK && tmp[0]) {
+        if (nvs_get_str(nvs, CFG_NVS_KEY_API_KEY, tmp, &len) == ESP_OK && tmp[0]) {
             safe_copy(s_api_key, sizeof(s_api_key), tmp);
         }
         len = sizeof(tmp);
         memset(tmp, 0, sizeof(tmp));
-        if (nvs_get_str(nvs, MIMI_NVS_KEY_MODEL, tmp, &len) == ESP_OK && tmp[0]) {
+        if (nvs_get_str(nvs, CFG_NVS_KEY_MODEL, tmp, &len) == ESP_OK && tmp[0]) {
             safe_copy(s_model, sizeof(s_model), tmp);
         }
         len = sizeof(tmp);
         memset(tmp, 0, sizeof(tmp));
-        if (nvs_get_str(nvs, MIMI_NVS_KEY_PROVIDER, tmp, &len) == ESP_OK && tmp[0]) {
+        if (nvs_get_str(nvs, CFG_NVS_KEY_PROVIDER, tmp, &len) == ESP_OK && tmp[0]) {
             safe_copy(s_provider, sizeof(s_provider), tmp);
         }
         nvs_close(nvs);
@@ -171,7 +171,7 @@ static esp_err_t llm_http_direct(const char *post_data, resp_buf_t *rb, int *out
         }
     } else {
         esp_http_client_set_header(client, "x-api-key", s_api_key);
-        esp_http_client_set_header(client, "anthropic-version", MIMI_LLM_API_VERSION);
+        esp_http_client_set_header(client, "anthropic-version", CFG_LLM_API_VERSION);
     }
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
@@ -209,7 +209,7 @@ static esp_err_t llm_http_via_proxy(const char *post_data, resp_buf_t *rb, int *
             "anthropic-version: %s\r\n"
             "Content-Length: %d\r\n"
             "Connection: close\r\n\r\n",
-            llm_api_path(), llm_api_host(), s_api_key, MIMI_LLM_API_VERSION, body_len);
+            llm_api_path(), llm_api_host(), s_api_key, CFG_LLM_API_VERSION, body_len);
     }
 
     if (proxy_conn_write(conn, header, hlen) < 0 ||
@@ -478,7 +478,7 @@ esp_err_t llm_chat(const char *system_prompt, const char *messages_json,
     /* Build request body (non-streaming) */
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "model", s_model);
-    cJSON_AddNumberToObject(body, "max_tokens", MIMI_LLM_MAX_TOKENS);
+    cJSON_AddNumberToObject(body, "max_tokens", CFG_LLM_MAX_TOKENS);
 
     if (provider_is_openai()) {
         cJSON *messages = cJSON_Parse(messages_json);
@@ -518,7 +518,7 @@ esp_err_t llm_chat(const char *system_prompt, const char *messages_json,
              s_provider, s_model, (int)strlen(post_data));
 
     resp_buf_t rb;
-    if (resp_buf_init(&rb, MIMI_LLM_STREAM_BUF_SIZE) != ESP_OK) {
+    if (resp_buf_init(&rb, CFG_LLM_STREAM_BUF_SIZE) != ESP_OK) {
         free(post_data);
         snprintf(response_buf, buf_size, "Error: Out of memory");
         return ESP_ERR_NO_MEM;
@@ -596,7 +596,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
     /* Build request body (non-streaming) */
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "model", s_model);
-    cJSON_AddNumberToObject(body, "max_tokens", MIMI_LLM_MAX_TOKENS);
+    cJSON_AddNumberToObject(body, "max_tokens", CFG_LLM_MAX_TOKENS);
 
     if (provider_is_openai()) {
         cJSON *openai_msgs = convert_messages_openai(system_prompt, messages);
@@ -634,7 +634,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
 
     /* HTTP call */
     resp_buf_t rb;
-    if (resp_buf_init(&rb, MIMI_LLM_STREAM_BUF_SIZE) != ESP_OK) {
+    if (resp_buf_init(&rb, CFG_LLM_STREAM_BUF_SIZE) != ESP_OK) {
         free(post_data);
         return ESP_ERR_NO_MEM;
     }
@@ -689,7 +689,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
                 if (tool_calls && cJSON_IsArray(tool_calls)) {
                     cJSON *tc;
                     cJSON_ArrayForEach(tc, tool_calls) {
-                        if (resp->call_count >= MIMI_MAX_TOOL_CALLS) break;
+                        if (resp->call_count >= CFG_MAX_TOOL_CALLS) break;
                         llm_tool_call_t *call = &resp->calls[resp->call_count];
                         cJSON *id = cJSON_GetObjectItem(tc, "id");
                         cJSON *func = cJSON_GetObjectItem(tc, "function");
@@ -761,7 +761,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
             cJSON_ArrayForEach(block, content) {
                 cJSON *btype = cJSON_GetObjectItem(block, "type");
                 if (!btype || !cJSON_IsString(btype) || strcmp(btype->valuestring, "tool_use") != 0) continue;
-                if (resp->call_count >= MIMI_MAX_TOOL_CALLS) break;
+                if (resp->call_count >= CFG_MAX_TOOL_CALLS) break;
 
                 llm_tool_call_t *call = &resp->calls[resp->call_count];
 
@@ -803,8 +803,8 @@ esp_err_t llm_chat_tools(const char *system_prompt,
 esp_err_t llm_set_api_key(const char *api_key)
 {
     nvs_handle_t nvs;
-    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_LLM, NVS_READWRITE, &nvs));
-    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_API_KEY, api_key));
+    ESP_ERROR_CHECK(nvs_open(CFG_NVS_LLM, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, CFG_NVS_KEY_API_KEY, api_key));
     ESP_ERROR_CHECK(nvs_commit(nvs));
     nvs_close(nvs);
 
@@ -816,8 +816,8 @@ esp_err_t llm_set_api_key(const char *api_key)
 esp_err_t llm_set_model(const char *model)
 {
     nvs_handle_t nvs;
-    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_LLM, NVS_READWRITE, &nvs));
-    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_MODEL, model));
+    ESP_ERROR_CHECK(nvs_open(CFG_NVS_LLM, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, CFG_NVS_KEY_MODEL, model));
     ESP_ERROR_CHECK(nvs_commit(nvs));
     nvs_close(nvs);
 
@@ -829,8 +829,8 @@ esp_err_t llm_set_model(const char *model)
 esp_err_t llm_set_provider(const char *provider)
 {
     nvs_handle_t nvs;
-    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_LLM, NVS_READWRITE, &nvs));
-    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_PROVIDER, provider));
+    ESP_ERROR_CHECK(nvs_open(CFG_NVS_LLM, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, CFG_NVS_KEY_PROVIDER, provider));
     ESP_ERROR_CHECK(nvs_commit(nvs));
     nvs_close(nvs);
 

@@ -27,8 +27,9 @@ typedef struct {
     bool      in_use;
 } atom_user_session_t;
 
-static atom_user_session_t *s_sessions = NULL;   /* PSRAM array */
+static atom_user_session_t *s_sessions = NULL;   /* PSRAM or internal RAM array */
 static SemaphoreHandle_t    s_mutex    = NULL;
+static bool                 s_using_psram = false;
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -59,22 +60,28 @@ static atom_user_session_t *find_or_alloc(const char *user_id)
 
 esp_err_t atom_session_init(void)
 {
+    /* Prefer PSRAM, but allow internal RAM fallback for PSRAM-less boards. */
     s_sessions = heap_caps_calloc(ATOM_SESSION_MAX_USERS,
                                   sizeof(atom_user_session_t),
                                   MALLOC_CAP_SPIRAM);
+    s_using_psram = (s_sessions != NULL);
     if (!s_sessions) {
-        ESP_LOGE(TAG, "Failed to allocate session buffer in PSRAM");
+        s_sessions = calloc(ATOM_SESSION_MAX_USERS, sizeof(atom_user_session_t));
+    }
+    if (!s_sessions) {
+        ESP_LOGE(TAG, "Failed to allocate session buffer");
         return ESP_ERR_NO_MEM;
     }
 
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) {
-        heap_caps_free(s_sessions);
+        free(s_sessions);
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "Session ring buffer ready (%d users × %d msgs each)",
-             ATOM_SESSION_MAX_USERS, ATOM_SESSION_MAX_MSGS);
+    ESP_LOGI(TAG, "Session ring buffer ready (%d users x %d msgs each, mem=%s)",
+             ATOM_SESSION_MAX_USERS, ATOM_SESSION_MAX_MSGS,
+             s_using_psram ? "PSRAM" : "INTERNAL");
     return ESP_OK;
 }
 

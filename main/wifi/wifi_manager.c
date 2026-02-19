@@ -1,8 +1,29 @@
 #include "wifi_manager.h"
+#if CONFIG_DEVICE_ATOMCLAW
+#include "atom_config.h"
+#define CFG_WIFI_MAX_RETRY      ATOM_WIFI_MAX_RETRY
+#define CFG_WIFI_RETRY_BASE_MS  ATOM_WIFI_RETRY_BASE_MS
+#define CFG_WIFI_RETRY_MAX_MS   ATOM_WIFI_RETRY_MAX_MS
+#define CFG_NVS_WIFI            ATOM_NVS_WIFI
+#define CFG_NVS_KEY_SSID        ATOM_NVS_KEY_SSID
+#define CFG_NVS_KEY_PASS        ATOM_NVS_KEY_PASS
+#define CFG_SECRET_WIFI_SSID    ATOM_SECRET_WIFI_SSID
+#define CFG_SECRET_WIFI_PASS    ATOM_SECRET_WIFI_PASS
+#else
 #include "mimi_config.h"
+#define CFG_WIFI_MAX_RETRY      MIMI_WIFI_MAX_RETRY
+#define CFG_WIFI_RETRY_BASE_MS  MIMI_WIFI_RETRY_BASE_MS
+#define CFG_WIFI_RETRY_MAX_MS   MIMI_WIFI_RETRY_MAX_MS
+#define CFG_NVS_WIFI            MIMI_NVS_WIFI
+#define CFG_NVS_KEY_SSID        MIMI_NVS_KEY_SSID
+#define CFG_NVS_KEY_PASS        MIMI_NVS_KEY_PASS
+#define CFG_SECRET_WIFI_SSID    MIMI_SECRET_WIFI_SSID
+#define CFG_SECRET_WIFI_PASS    MIMI_SECRET_WIFI_PASS
+#endif
 
 #include <string.h>
 #include <inttypes.h>
+#include <ctype.h>
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -15,6 +36,15 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_count = 0;
 static char s_ip_str[16] = "0.0.0.0";
 static bool s_connected = false;
+
+static void trim_trailing_ws(char *s)
+{
+    size_t n = strlen(s);
+    while (n > 0 && isspace((unsigned char)s[n - 1])) {
+        s[n - 1] = '\0';
+        n--;
+    }
+}
 
 static const char *wifi_reason_to_str(wifi_err_reason_t reason)
 {
@@ -44,21 +74,9 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         if (disc) {
             ESP_LOGW(TAG, "Disconnected (reason=%d:%s)", disc->reason, wifi_reason_to_str(disc->reason));
         }
-        if (s_retry_count < MIMI_WIFI_MAX_RETRY) {
-            /* Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 30s */
-            uint32_t delay_ms = MIMI_WIFI_RETRY_BASE_MS << s_retry_count;
-            if (delay_ms > MIMI_WIFI_RETRY_MAX_MS) {
-                delay_ms = MIMI_WIFI_RETRY_MAX_MS;
-            }
-            ESP_LOGW(TAG, "Disconnected, retry %d/%d in %" PRIu32 "ms",
-                     s_retry_count + 1, MIMI_WIFI_MAX_RETRY, delay_ms);
-            vTaskDelay(pdMS_TO_TICKS(delay_ms));
-            esp_wifi_connect();
-            s_retry_count++;
-        } else {
-            ESP_LOGE(TAG, "Failed to connect after %d retries", MIMI_WIFI_MAX_RETRY);
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
+        s_retry_count++;
+        ESP_LOGW(TAG, "Disconnected, retry %d (immediate)", s_retry_count);
+        esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         snprintf(s_ip_str, sizeof(s_ip_str), IPSTR, IP2STR(&event->ip_info.ip));
@@ -95,25 +113,36 @@ esp_err_t wifi_manager_start(void)
 {
     wifi_config_t wifi_cfg = {0};
     bool found = false;
+    const char *cred_source = "none";
 
-    /* NVS overrides take highest priority (set via CLI) */
-    nvs_handle_t nvs;
-    if (nvs_open(MIMI_NVS_WIFI, NVS_READONLY, &nvs) == ESP_OK) {
-        size_t len = sizeof(wifi_cfg.sta.ssid);
-        if (nvs_get_str(nvs, MIMI_NVS_KEY_SSID, (char *)wifi_cfg.sta.ssid, &len) == ESP_OK) {
-            len = sizeof(wifi_cfg.sta.password);
-            nvs_get_str(nvs, MIMI_NVS_KEY_PASS, (char *)wifi_cfg.sta.password, &len);
-            found = true;
+    /* NVS overrides take highest priority (set via CLI) unless disabled for diagnostics. */
+#if CONFIG_DEVICE_ATOMCLAW
+    if (ATOM_WIFI_USE_NVS) {
+#endif
+        nvs_handle_t nvs;
+        if (nvs_open(CFG_NVS_WIFI, NVS_READONLY, &nvs) == ESP_OK) {
+            size_t len = sizeof(wifi_cfg.sta.ssid);
+            if (nvs_get_str(nvs, CFG_NVS_KEY_SSID, (char *)wifi_cfg.sta.ssid, &len) == ESP_OK) {
+                len = sizeof(wifi_cfg.sta.password);
+                nvs_get_str(nvs, CFG_NVS_KEY_PASS, (char *)wifi_cfg.sta.password, &len);
+                found = true;
+                cred_source = "NVS";
+            }
+            nvs_close(nvs);
         }
-        nvs_close(nvs);
+#if CONFIG_DEVICE_ATOMCLAW
+    } else {
+        ESP_LOGW(TAG, "ATOM_WIFI_USE_NVS=0: ignoring NVS WiFi credentials");
     }
+#endif
 
     /* Fall back to build-time secrets */
     if (!found) {
-        if (MIMI_SECRET_WIFI_SSID[0] != '\0') {
-            strncpy((char *)wifi_cfg.sta.ssid, MIMI_SECRET_WIFI_SSID, sizeof(wifi_cfg.sta.ssid) - 1);
-            strncpy((char *)wifi_cfg.sta.password, MIMI_SECRET_WIFI_PASS, sizeof(wifi_cfg.sta.password) - 1);
+        if (CFG_SECRET_WIFI_SSID[0] != '\0') {
+            strncpy((char *)wifi_cfg.sta.ssid, CFG_SECRET_WIFI_SSID, sizeof(wifi_cfg.sta.ssid) - 1);
+            strncpy((char *)wifi_cfg.sta.password, CFG_SECRET_WIFI_PASS, sizeof(wifi_cfg.sta.password) - 1);
             found = true;
+            cred_source = "build";
         }
     }
 
@@ -122,10 +151,27 @@ esp_err_t wifi_manager_start(void)
         return ESP_ERR_NOT_FOUND;
     }
 
-    ESP_LOGI(TAG, "Connecting to SSID: %s", wifi_cfg.sta.ssid);
+    wifi_cfg.sta.ssid[sizeof(wifi_cfg.sta.ssid) - 1] = '\0';
+    wifi_cfg.sta.password[sizeof(wifi_cfg.sta.password) - 1] = '\0';
+    trim_trailing_ws((char *)wifi_cfg.sta.ssid);
+    trim_trailing_ws((char *)wifi_cfg.sta.password);
 
+    /* Keep station policy permissive; AP security is decided by handshake. */
+    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wifi_cfg.sta.pmf_cfg.capable = true;
+    wifi_cfg.sta.pmf_cfg.required = false;
+
+    ESP_LOGI(TAG, "Connecting to SSID: %s (source=%s, pass_len=%d)",
+             wifi_cfg.sta.ssid, cred_source, (int)strlen((char *)wifi_cfg.sta.password));
+
+    /* Do not persist runtime config in Wi-Fi NVS; keep startup deterministic. */
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* Match diagnostics behavior under unstable APs: keep radio awake. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     return ESP_OK;
 }
@@ -145,20 +191,38 @@ esp_err_t wifi_manager_wait_connected(uint32_t timeout_ms)
 
 bool wifi_manager_is_connected(void)
 {
-    return s_connected;
+    if (s_connected) {
+        return true;
+    }
+
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        s_connected = true;
+        return true;
+    }
+    return false;
 }
 
 const char *wifi_manager_get_ip(void)
 {
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta) {
+        esp_netif_ip_info_t ip_info = {0};
+        if (esp_netif_get_ip_info(sta, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+            snprintf(s_ip_str, sizeof(s_ip_str), IPSTR, IP2STR(&ip_info.ip));
+            return s_ip_str;
+        }
+    }
+    strcpy(s_ip_str, "0.0.0.0");
     return s_ip_str;
 }
 
 esp_err_t wifi_manager_set_credentials(const char *ssid, const char *password)
 {
     nvs_handle_t nvs;
-    ESP_ERROR_CHECK(nvs_open(MIMI_NVS_WIFI, NVS_READWRITE, &nvs));
-    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_SSID, ssid));
-    ESP_ERROR_CHECK(nvs_set_str(nvs, MIMI_NVS_KEY_PASS, password));
+    ESP_ERROR_CHECK(nvs_open(CFG_NVS_WIFI, NVS_READWRITE, &nvs));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, CFG_NVS_KEY_SSID, ssid));
+    ESP_ERROR_CHECK(nvs_set_str(nvs, CFG_NVS_KEY_PASS, password));
     ESP_ERROR_CHECK(nvs_commit(nvs));
     nvs_close(nvs);
     ESP_LOGI(TAG, "WiFi credentials saved for SSID: %s", ssid);
