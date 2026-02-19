@@ -5,6 +5,7 @@ Discordのスラッシュコマンドで会話し、オプションでCloudflare
 
 > **デバイスへの書き込み手順**（ビルド・フラッシュ）は [DEVICE_SETUP.md](DEVICE_SETUP.md) を参照してください。
 > 命名移行メモ（MimiClaw -> AtomClaw）は [NAMING_NOTES.md](NAMING_NOTES.md) を参照してください。
+> ライセンスと帰属メモは [LICENSE_NOTES.md](LICENSE_NOTES.md) を参照してください。
 
 ---
 

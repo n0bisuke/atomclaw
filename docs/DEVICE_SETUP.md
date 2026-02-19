@@ -5,6 +5,7 @@ ESP32-S3ボードへのビルド・書き込み手順です。
 **ビルドツールは PlatformIO と ESP-IDF (idf.py) のどちらでも使えます。**
 
 > サービス設定（Discord・Cloudflare・APIキー等）は [ATOMCLAW_SETUP.md](ATOMCLAW_SETUP.md) を参照してください。
+> ライセンスと帰属メモは [LICENSE_NOTES.md](LICENSE_NOTES.md) を参照してください。
 
 ---
 
